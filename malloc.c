@@ -222,10 +222,8 @@ Header * getEmptyHeaderFromList(
                                 size_t size)   /* Size needed */
 {
 #if STRATEGY == 2
-    printf("BEST FIT\n");
     return bestFitHeaderFromList(list, size);
 #else
-    printf("FIRST FIT\n");
     return firstFitHeaderFromList(list, size);
 #endif
 }
