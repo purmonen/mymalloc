@@ -1,4 +1,4 @@
-#include "pmalloc.h"
+#include "malloc.h"
 #include <sys/mman.h>
 #include <stdio.h>
 #include <errno.h>
@@ -11,22 +11,48 @@
 #define ALIGNMENTMASK ~7
 #define HEADERSIZE ((sizeof(Header)+ALIGNMENT-1) & ALIGNMENTMASK)
 
-struct Header {
-	struct Header *next;
-	size_t size;
-} typedef Header;
+/*
+ * Header is a structure for storing a linked list of nodes
+ * that are associated with memory that can be allocated by
+ * users of malloc.
+ */
 
+typedef struct Header Header;
+struct Header
+{
+    struct Header *next;  /* Next element in linked list */
+    size_t size;          /* Size that can this node has that can be allocated by user */
+};
+
+/*
+ * Head of the free list
+ */
 Header *freeList = NULL;
 
-static void * __endHeap = 0;
+/*
+ * Stores how much memory has been allocated by mmap
+ */
+static void * __endHeap;
 
-void * endHeap(void)
+/** endHeap
+ *
+ * Returns __endHeap or initialize if its not
+ */
+void *endHeap()
 {
     if(__endHeap == 0) __endHeap = sbrk(0);
     return __endHeap;
 }
 
-long closestAlignedAddress(long address) {
+/** clonestAlignedAddress
+ *
+ * takes and address and returns the closest larger
+ * address aligned with ALIGNMENT
+ */
+long
+closestAlignedAddress(
+                           long address) /* Address to be aligned */
+{
     long nextAddress = address - (address % ALIGNMENT);
     if (nextAddress < address) {
         nextAddress += ALIGNMENT;
@@ -35,10 +61,18 @@ long closestAlignedAddress(long address) {
 }
 
 
-
-Header * getNextHeader(long start, long end) {
-	long nextPosition = closestAlignedAddress(start);
-	long emptySpace = end - nextPosition - HEADERSIZE;
+/** getNextHeader
+ *
+ * Returns the closest header that can fit within address start and end
+ * and be aligned and still have empty space available
+ */
+Header *
+getNextHeader(
+              long start, /* start address */
+              long end)   /* end address */
+{
+    long nextPosition = closestAlignedAddress(start);
+    long emptySpace = end - nextPosition - HEADERSIZE;
     
     if (emptySpace <= 0) return NULL;
     Header *header = (Header *)nextPosition;
@@ -47,7 +81,15 @@ Header * getNextHeader(long start, long end) {
     return header;
 }
 
-void insertIntoList(Header **list, Header *header) {
+/** insertIntoList
+ *
+ * insert a new header into the list and merges the new element
+ * if possible
+ */
+void insertIntoList(
+                    Header **list,     /* List to be inserted into */
+                    Header *header)    /* Header to be inserted */
+{
     header->next = NULL;
     Header *current = *list;
     Header *prev = NULL;
@@ -57,12 +99,15 @@ void insertIntoList(Header **list, Header *header) {
     }
     header->next = current;
     
+    /* Try to merge header with the next element if possible */
     if (header->next) {
         if ((long)header + header->size + HEADERSIZE == (long)header->next) {
             header->size += HEADERSIZE + header->next->size;
             header->next = header->next->next;
         }
     }
+    
+    /* If previous element exist try to merge that one with the new element */
     if (prev) {
         prev->next = header;
         if ((long)prev + prev->size + HEADERSIZE == (long)header) {
@@ -74,7 +119,13 @@ void insertIntoList(Header **list, Header *header) {
     }
 }
 
-void removeFromList(Header **list, Header *header) {
+/** removeFromList
+ *
+ * Removes header from list
+ */
+void removeFromList(
+                    Header **list,    /* List to remove header from */
+                    Header *header) { /* Header to be removed */
     Header *current = *list;
     Header *prev = NULL;
     while (current != header) {
@@ -89,7 +140,16 @@ void removeFromList(Header **list, Header *header) {
     }
 }
 
-void addRemainingHeaderToList(Header **list, Header *header, size_t size) {
+/* addRemainingHeaderToList
+ *
+ * If a new header can be fitted into the headers place when header is 
+ * resized to size then the header is resized to size and the new header
+ * is inserted into the list
+ */
+void addRemainingHeaderToList(Header **list,  /* List to use */
+                              Header *header, /* Header to resize */
+                              size_t size)    /* size to resize */
+{
     long start = (long)header + size + HEADERSIZE;
     long end = (long)header + header->size + HEADERSIZE;
     Header * nextHeader = getNextHeader(start, end);
@@ -99,24 +159,44 @@ void addRemainingHeaderToList(Header **list, Header *header, size_t size) {
     }
 }
 
-Header * firstFitHeaderFromList(Header **list, size_t size) {
-	Header *current = *list;
-	while (current) {
-		if (current->size >= size) {
+/** firstFitHeaderFromList
+ *
+ * returns the first header from list that has atleast size
+ * available memory
+ */
+Header * firstFitHeaderFromList(
+                                Header **list, /* List to use */
+                                size_t size) { /* Size needed */
+    Header *current = *list;
+    while (current) {
+        if (current->size >= size) {
             removeFromList(list, current);
+            
+            /* Add header with remaining space if there is one */
             addRemainingHeaderToList(list, current, size);
-			return current;
-		}
+            
+            /* found matching header */
+            return current;
+        }
         current = current->next;
-	}
-	return NULL;
+    }
+    return NULL;
 }
 
-Header * bestFitHeaderFromList(Header **list, size_t size) {
-	Header *current = *list;
+/** bestFitHeaderFromList
+ *
+ * returns the header that is closes to size but least as large
+ */
+Header * bestFitHeaderFromList(
+                               Header **list, /* List to use */
+                               size_t size) { /* size needed */
+    Header *current = *list;
     Header *bestHeader = NULL;
-	while (current) {
-		if (current->size >= size) {
+    while (current) {
+        if (current->size >= size) {
+            /* Change currently found best header if we find a better match or if there was no
+             * previously used
+             */
             if (!bestHeader || (bestHeader->size - size) > (current->size - size)) {
                 bestHeader = current;
             }
@@ -124,49 +204,94 @@ Header * bestFitHeaderFromList(Header **list, size_t size) {
         current = current->next;
     }
     if (!bestHeader) return NULL;
+    /* Remove best header from free list */
     removeFromList(list, bestHeader);
+    
+    /* add new header with remaining space */
     addRemainingHeaderToList(list, bestHeader, size);
     return bestHeader;
 }
 
-Header * getEmptyHeaderFromList(Header **list, size_t size) {
+/** getEmptyHeaderFromList
+ *
+ * tries to find an header in a list that has appropriate size with either
+ * firstFit or bestFit
+ */
+Header * getEmptyHeaderFromList(
+                                Header **list, /* List to use */
+                                size_t size)   /* Size needed */
+{
+#if STRATEGY == 2
+    printf("BEST FIT\n");
     return bestFitHeaderFromList(list, size);
+#else
+    printf("FIRST FIT\n");
+    return firstFitHeaderFromList(list, size);
+#endif
 }
 
-void allocateMoreSpace(size_t size) {
-	long pageSize = sysconf(_SC_PAGESIZE);
-	long usedSize = (int)size + HEADERSIZE;
-	long pages = (usedSize - 1) / pageSize + 1;
-	long totalSize = pages * pageSize;
-	Header * header = mmap(__endHeap, totalSize, PROT_READ|PROT_WRITE, MAP_ANON|MAP_SHARED, -1, 0);
+/** allocateMoreSpace
+ *
+ * allocate enough space so that size request can be fulfilled and atleast one page size
+ * and insert a new header with that size
+ */
+void allocateMoreSpace(
+                       size_t size) /* Size needed */
+{
+    long pageSize = sysconf(_SC_PAGESIZE);
+    long usedSize = (int)size + HEADERSIZE;
+    long pages = (usedSize - 1) / pageSize + 1;
+    long totalSize = pages * pageSize;
+    Header * header = mmap(__endHeap, totalSize, PROT_READ|PROT_WRITE, MAP_ANON|MAP_SHARED, -1, 0);
     __endHeap += totalSize;
     if (!header) return;
-	header->size = totalSize - HEADERSIZE;
-	insertIntoList(&freeList, header);
+    header->size = totalSize - HEADERSIZE;
+    insertIntoList(&freeList, header);
 }
 
-
-Header * headerFromAddress(void *address) {
+/** headerFromAddress
+ *
+ * returns a header from an address where headers storage starts
+ */
+Header * headerFromAddress(
+                           void *address) /* address to use */
+{
     return (Header *)((char *)address - HEADERSIZE);
 }
 
+/** addressFromHeader
+ *
+ * returns the address from a header where storage starts
+ */
 void * addressFromHeader(Header *header) {
     return (void *)((char *)header + HEADERSIZE);
 }
 
-void * malloc(size_t size) {
+/** malloc
+ *
+ * return an address where the caller can store memory
+ */
+void * malloc(
+              size_t size) /* Size of memory needed */
+{
     if (size <= 0) return NULL;
-	Header * emptyHeader = getEmptyHeaderFromList(&freeList, size);
-	if (!emptyHeader) {
-		allocateMoreSpace(size);
+    
+    /* Try to find empty header in free list if not possible allocate new space */
+    Header * emptyHeader = getEmptyHeaderFromList(&freeList, size);
+    if (!emptyHeader) {
+        allocateMoreSpace(size);
         emptyHeader = getEmptyHeaderFromList(&freeList, size);
         if (!emptyHeader) return NULL;
-	}
+    }
     return addressFromHeader(emptyHeader);
 }
 
-
-void * realloc(void *p, size_t size) {
+/** realloc
+ *
+ * allocates new memory with malloc and copies content from pointer p to it
+ */
+void * realloc(void *p,        /* address to be copied from */
+               size_t size) {  /* size to be copied */
     if (size <= 0) {
         free(p);
         return NULL;
@@ -174,6 +299,8 @@ void * realloc(void *p, size_t size) {
     if (!p) return malloc(size);
     Header *header = headerFromAddress(p);
     void *data = malloc(size);
+    
+    /* Only copy enough memory to not exceed boundaries */
     long minSize = size < header->size ? size : header->size;
     long i;
     for (i = 0; i < minSize; i++) {
@@ -183,7 +310,13 @@ void * realloc(void *p, size_t size) {
     return data;
 }
 
-void free(void *p) {
+/** free
+ *
+ * frees content allocated with malloc so it can be reused
+ */
+void free(
+          void *p) /* Address to be freed */
+{
     if (!p) return;
     Header *header = headerFromAddress(p);
     insertIntoList(&freeList, header);
