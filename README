@@ -1,0 +1,2 @@
+Our test files for memory and performance begin with test-prefix. To run the main program you should 
+run make and then run RUN_TESTS.
