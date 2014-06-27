@@ -1,0 +1,17 @@
+for file in test*.c
+do
+	echo "########## Testing $file ##########"
+	echo "Our firstfit"
+	gcc $file ../malloc.c -DSTRATEGY=4
+	time ./a.out
+	echo "--------------"
+	echo "Our bestfit"
+	gcc $file ../malloc.c -DSTRATEGY=2
+	time ./a.out
+	echo "--------------"
+	echo "Systems malloc"
+	gcc $file
+	time ./a.out
+	echo "--------------"
+done
+

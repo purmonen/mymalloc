@@ -24,6 +24,7 @@ struct Header
     size_t size;          /* Size that can this node has that can be allocated by user */
 };
 
+
 /*
  * Head of the free list
  */
@@ -125,18 +126,13 @@ void insertIntoList(
  */
 void removeFromList(
                     Header **list,    /* List to remove header from */
+					Header *beforeHeader,
                     Header *header) { /* Header to be removed */
-    Header *current = *list;
-    Header *prev = NULL;
-    while (current != header) {
-        prev = current;
-        current = current->next;
-    }
-    if (!current) return;
-    if (prev) {
-        prev->next = current->next;
+    if (!header) return;
+    if (beforeHeader) {
+        beforeHeader->next = header->next;
     } else {
-        *list = current->next;
+        *list = header->next;
     }
 }
 
@@ -168,16 +164,18 @@ Header * firstFitHeaderFromList(
                                 Header **list, /* List to use */
                                 size_t size) { /* Size needed */
     Header *current = *list;
+	Header *prev = NULL;
     while (current) {
         if (current->size >= size) {
-            removeFromList(list, current);
+            removeFromList(list, prev, current);
             
-            /* Add header with remaining space if there is one */
+            /* Add header with remaining space if there is room for one */
             addRemainingHeaderToList(list, current, size);
             
             /* found matching header */
             return current;
         }
+        prev = current;
         current = current->next;
     }
     return NULL;
@@ -191,26 +189,35 @@ Header * bestFitHeaderFromList(
                                Header **list, /* List to use */
                                size_t size) { /* size needed */
     Header *current = *list;
+	Header *prev = NULL;
     Header *bestHeader = NULL;
+	Header *beforeBestHeader = NULL;
     while (current) {
         if (current->size >= size) {
             /* Change currently found best header if we find a better match or if there was no
              * previously used
              */
             if (!bestHeader || (bestHeader->size - size) > (current->size - size)) {
+				beforeBestHeader = prev;
                 bestHeader = current;
             }
+			if (bestHeader->size == size) {
+				break;
+			}
         }
+		prev = current;
         current = current->next;
     }
     if (!bestHeader) return NULL;
     /* Remove best header from free list */
-    removeFromList(list, bestHeader);
+    removeFromList(list, beforeBestHeader, bestHeader);
     
-    /* add new header with remaining space */
+    /* add new header with remaining space if there is enough */
     addRemainingHeaderToList(list, bestHeader, size);
     return bestHeader;
 }
+
+int firstRun = 0;
 
 /** getEmptyHeaderFromList
  *
@@ -222,8 +229,12 @@ Header * getEmptyHeaderFromList(
                                 size_t size)   /* Size needed */
 {
 #if STRATEGY == 2
+	if (!firstRun) printf("BEST FIT\n");
+	firstRun = 1;
     return bestFitHeaderFromList(list, size);
 #else
+	if (!firstRun) printf("FIRST FIT\n");
+	firstRun = 1;
     return firstFitHeaderFromList(list, size);
 #endif
 }
@@ -242,7 +253,7 @@ void allocateMoreSpace(
     long totalSize = pages * pageSize;
     Header * header = mmap(__endHeap, totalSize, PROT_READ|PROT_WRITE, MAP_ANON|MAP_SHARED, -1, 0);
     __endHeap += totalSize;
-    if (!header) return;
+    if (!header || header == (Header *)-1) return;
     header->size = totalSize - HEADERSIZE;
     insertIntoList(&freeList, header);
 }
@@ -279,7 +290,9 @@ void * malloc(
     if (!emptyHeader) {
         allocateMoreSpace(size);
         emptyHeader = getEmptyHeaderFromList(&freeList, size);
-        if (!emptyHeader) return NULL;
+        if (!emptyHeader) {
+			return NULL;
+		}
     }
     return addressFromHeader(emptyHeader);
 }
@@ -318,4 +331,12 @@ void free(
     if (!p) return;
     Header *header = headerFromAddress(p);
     insertIntoList(&freeList, header);
+}
+
+struct mallinfo mallinfo() {
+	struct mallinfo info;
+	info.arena = 0;
+	info.hblkhd = (int) (long)endHeap();
+	info.ordblks = -1337;
+	return info;
 }
