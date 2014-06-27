@@ -1,16 +1,20 @@
 for file in test*.c
 do
+	if [ $file == "test.c" ]
+	then
+		continue
+	fi 
 	echo "########## Testing $file ##########"
 	echo "Our firstfit"
-	gcc $file ../malloc.c -DSTRATEGY=4
+	gcc $file ../malloc.c -DSTRATEGY=4 -O4
 	time ./a.out
 	echo "--------------"
 	echo "Our bestfit"
-	gcc $file ../malloc.c -DSTRATEGY=2
+	gcc $file ../malloc.c -DSTRATEGY=2 -O4
 	time ./a.out
 	echo "--------------"
 	echo "Systems malloc"
-	gcc $file
+	gcc $file -O4
 	time ./a.out
 	echo "--------------"
 done

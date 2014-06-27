@@ -333,10 +333,22 @@ void free(
     insertIntoList(&freeList, header);
 }
 
+int countFreeList() {
+	Header *current = freeList;
+	int count = 0;
+	while (current) {
+		current = current->next;
+		count++;	
+	}
+	return count;
+}
+
 struct mallinfo mallinfo() {
 	struct mallinfo info;
 	info.arena = 0;
 	info.hblkhd = (int) (long)endHeap();
-	info.ordblks = -1337;
+	info.ordblks = countFreeList();
+	info.smblks = 0;
+	info.keepcost = -1337;
 	return info;
 }
